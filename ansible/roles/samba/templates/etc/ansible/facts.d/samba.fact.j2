@@ -1,0 +1,33 @@
+#!{{ ansible_python['executable'] }}
+# -*- coding: utf-8 -*-
+
+# Copyright (C) 2021 Alex Kitching <alex.kitching@amalgamstudios.com>
+# SPDX-License-Identifier: GPL-3.0-only
+
+# {{ ansible_managed }}
+
+from __future__ import print_function
+import os
+import re
+import json
+
+output = {
+    'sid': '',
+    'domains': {}
+}
+
+lines = os.popen('/usr/bin/net getlocalsid').readline()
+localPattern = re.compile('SID for domain (.*) is: (.*)$')
+sidres = localPattern.findall(lines)
+output['sid'] = sidres[0][1]
+
+doms = os.popen('/usr/bin/net getdomainsid').readlines()
+
+pattern = re.compile('SID for domain (.*) is: (.*)$')
+for line in doms:
+    res = pattern.findall(line.strip())
+    domain = res[0][0]
+    sid = res[0][1]
+    output['domains'][domain] = sid
+
+print(json.dumps(output, sort_keys=True, indent=4))

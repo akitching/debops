@@ -168,11 +168,28 @@ samba__default_global:
   disable_spoolss: 'yes'
 
                                                                    # ]]]
+# .. envvar:: samba__default_ldap [[[
+#
+# LDAP ``[global`` configuration.
+samba__default_ldap:
+  domain_logons: 'yes'
+  passdb_backend: 'ldapsam:{{ samba__ldap_passdb_backend }}'
+  ldap_suffix: '{{ samba__ldap_base_dn | join(",") }}'
+  ldap_user_suffix: '{{ samba__ldap_people_rdn }}'
+  ldap_group_suffix: '{{ samba__ldap_groups_rdn }}'
+  ldap_machine_suffix: '{{ samba__ldap_machines_rdn }}'
+  ldap_admin_dn: '{{ samba__ldap_binddn }}'
+  ldap_ssl: 'start tls'
+  # If setting password via Samba, only update the LDAP password
+  # The smbk5pwd overlay will update the LM and NT password hashes
+  ldap_passwd_sync: 'only'
+                                                                   # ]]]
 # .. envvar:: samba__global [[[
 #
 # Which hash variable is used to configure the ``[global]`` section in
 # :file:`/etc/samba/smb.conf`.
-samba__global: '{{ samba__default_global }}'
+samba__global: '{{ samba__default_global
+                   | combine( samba__default_ldap if (samba__ldap_enabled) else {}) }}'
 
                                                                    # ]]]
 # .. envvar:: samba__global_custom [[[
@@ -240,6 +257,191 @@ samba__default_shares:
     guest_ok: 'yes'
                                                                    # ]]]
                                                                    # ]]]
+# LDAP configuration [[[
+# ----------------------
+
+# .. envvar:: samba__ldap_enabled [[[
+#
+# Enable or disable LDAP integration in Samba.
+samba__ldap_enabled: '{{ ansible_local.ldap.enabled
+                         if (ansible_local|d() and ansible_local.ldap|d() and
+                             ansible_local.ldap.enabled is defined)
+                         else False }}'
+
+                                                                   # ]]]
+# .. envvar:: samba__domain_sid [[[
+#
+# The security identifier to use the the domain.
+samba__domain_sid: "S-1-5-21-{{ lookup('password', secret + '/samba/' +
+                                samba__workgroup + '/SID/subauthority1
+                                length=10 chars=digits')
+                                }}-{{
+                                lookup('password', secret + '/samba/' +
+                                samba__workgroup + '/SID/subauthority2
+                                length=10 chars=digits')
+                                }}-{{
+                                lookup('password', secret + '/samba/' +
+                                samba__workgroup + '/SID/subauthority3
+                                length=10 chars=digits') }}"
+                                                                   # ]]]
+
+# .. envvar:: samba__ldap_hosts [[[
+#
+# List of the FQDN addresses of the LDAP directory servers which should be used
+# by samba.
+samba__ldap_hosts: '{{ ansible_local.ldap.hosts|d([]) }}'
+
+                                                                   # ]]]
+# .. envvar:: samba__ldap_passdb_backend [[[
+#
+# The passdb backend configuration to use for LDAP backed Samba.
+samba__ldap_passdb_backend: '"ldap://{{ samba__ldap_hosts | join(" ldap://") }}"'
+
+                                                                   # ]]]
+# .. envvar:: samba__ldap_port [[[
+#
+# The TCP port to use to connect to the LDAP directory.
+samba__ldap_port: '{{ ansible_local.ldap.port|d("389") }}'
+
+                                                                   # ]]]
+# .. envvar:: samba__ldap_use_tls [[[
+#
+# Enable or disable support for STARTTLS extension while connecting to the LDAP
+# directory.
+samba__ldap_use_tls: '{{ ansible_local.ldap.start_tls|d(True) }}'
+
+                                                                   # ]]]
+# .. envvar:: samba__ldap_base_dn [[[
+#
+# The Base Distinguished Name of the LDAP directory, defined as a YAML list.
+samba__ldap_base_dn: '{{ ansible_local.ldap.base_dn|d([]) }}'
+
+                                                                   # ]]]
+# .. envvar:: samba__ldap_device_dn [[[
+#
+# The Distinguished Name of the current host LDAP object, defined as a YAML
+# list. It will be used as a base for the samba application account LDAP
+# object. If the list is empty, the role will not create the account LDAP
+# object automatically.
+samba__ldap_device_dn: '{{ ansible_local.ldap.device_dn|d([]) }}'
+
+                                                                   # ]]]
+# .. envvar:: samba__ldap_self_rdn [[[
+#
+# The Relative Distinguished Name of the account LDAP object used by the
+# samba application to access the LDAP directory.
+samba__ldap_self_rdn: 'uid=samba'
+
+                                                                   # ]]]
+# .. envvar:: samba__ldap_self_object_classes [[[
+#
+# List of the LDAP object classes which will be used to create the LDAP object
+# used by the samba application to access the LDAP directory.
+samba__ldap_self_object_classes: [ 'account', 'simpleSecurityObject' ]
+
+                                                                   # ]]]
+# .. envvar:: samba__ldap_self_attributes [[[
+#
+# YAML dictionary that defines the attributes of the LDAP object used by the
+# samba application to access the LDAP directory.
+samba__ldap_self_attributes:
+  uid: '{{ samba__ldap_self_rdn.split("=")[1] }}'
+  userPassword: '{{ samba__ldap_bindpw }}'
+  host: '{{ [ ansible_fqdn, ansible_hostname ] | unique }}'
+  description: 'Account used by the "samba" application to access the LDAP directory'
+
+                                                                   # ]]]
+# .. envvar:: samba__ldap_binddn [[[
+#
+# The Distinguished Name of the account LDAP object used by the
+# samba application to bind to the LDAP directory.
+samba__ldap_binddn: '{{ ([ samba__ldap_self_rdn ] + samba__ldap_device_dn) | join(",") }}'
+
+                                                                   # ]]]
+# .. envvar:: samba__ldap_bindpw [[[
+#
+# The password stored in the account LDAP object used by the samba
+# application to bind to the LDAP directory.
+samba__ldap_bindpw: '{{ lookup("password", secret + "/ldap/credentials/"
+                                   + samba__ldap_binddn | to_uuid + ".password length=32") }}'
+
+                                                                   # ]]]
+# .. envvar:: samba__ldap_people_rdn [[[
+#
+# The Relative Distinguished Name of the people subtree which contains personal
+# LDAP entries.
+samba__ldap_people_rdn: '{{ ansible_local.ldap.people_rdn|d([]) }}'
+
+                                                                   # ]]]
+# .. envvar:: samba__ldap_people_dn [[[
+#
+# The Distinguished Name of the people subtree.
+samba__ldap_people_dn: '{{ [ samba__ldap_people_rdn ]
+                               + samba__ldap_base_dn }}'
+
+                                                                   # ]]]
+# .. envvar:: samba__ldap_machines_rdn [[[
+#
+# The Relative Distinguished Name of the machines subtree which contains machine
+# LDAP entries.
+samba__ldap_machines_rdn: '{{ ansible_local.ldap.machines_rdn|d([]) }}'
+
+                                                                   # ]]]
+# .. envvar:: samba__ldap_machines_dn [[[
+#
+# The Distinguished Name of the machines subtree.
+samba__ldap_machines_dn: '{{ [ samba__ldap_machines_rdn ]
+                               + samba__ldap_base_dn }}'
+
+                                                                   # ]]]
+# .. envvar:: samba__ldap_groups_rdn [[[
+#
+# The Relative Distinguished Name of the groups subtree which contains group
+# LDAP entries.
+samba__ldap_groups_rdn: '{{ ansible_local.ldap.groups_rdn|d([]) }}'
+
+                                                                   # ]]]
+# .. envvar:: samba__ldap_groups_dn [[[
+#
+# The Distinguished Name of the groups subtree.
+samba__ldap_groups_dn: '{{ [ samba__ldap_groups_rdn ]
+                               + samba__ldap_base_dn }}'
+
+                                                                   # ]]]
+
+# .. envvar:: samba__ldap_domain_rdn [[[
+#
+# The Relative Distinguished Name of the domain LDAP object.
+samba__ldap_domain_rdn: '{{ "sambaDomainName=" + samba__workgroup }}'
+
+                                                                   # ]]]
+# .. envvar:: samba__ldap_domain_object_classes [[[
+#
+# List of the LDAP object classes which will be used to create the LDAP object
+# used by the samba application to access the LDAP directory.
+samba__ldap_domain_object_classes: [ 'sambaDomain' ]
+
+                                                                   # ]]]
+# .. envvar:: samba__ldap_domain_attributes [[[
+#
+# YAML dictionary that defines the attributes of the LDAP object used by the
+# samba application to access the LDAP directory.
+samba__ldap_domain_attributes:
+  sambaDomainName: '{{ samba__ldap_domain_rdn.split("=")[1] }}'
+  sambaSID: '{{ samba__domain_sid }}'
+  sambaPwdHistoryLength: 0
+  sambaMaxPwdAge: '-1'
+  sambaMinPwdAge: 0
+
+                                                                   # ]]]
+# .. envvar:: samba__ldap_binddn [[[
+#
+# The Distinguished Name of the account LDAP object used by the
+# samba application to bind to the LDAP directory.
+samba__ldap_domain_dn: '{{ ([ samba__ldap_domain_rdn, "ou=Domains" ]
+                            + samba__ldap_base_dn) | join(",") }}'
+
+                                                                   # ]]]
 # .. envvar:: samba__ferm__dependent_rules [[[
 #
 # Configuration for :command:`iptables` firewall managed by :program:`ferm`.
@@ -262,5 +464,36 @@ samba__ferm__dependent_rules:
     filename: 'samba__dependency_accept_tcp'
     delete: '{{ "samba" not in samba__base_packages }}'
     weight: '50'
+
+                                                                   # ]]]
+# .. envvar:: samba__ldap__dependent_tasks [[[
+#
+# Configuration for the :ref:`debops.ldap` Ansible role.
+samba__ldap__dependent_tasks:
+
+  - name: 'Create samba account for {{ samba__ldap_device_dn | join(",") }}'
+    dn: '{{ samba__ldap_binddn }}'
+    objectClass: '{{ samba__ldap_self_object_classes }}'
+    attributes: '{{ samba__ldap_self_attributes }}'
+    no_log: True
+    state: '{{ "present"
+               if (samba__ldap_enabled)
+               else "ignore" }}'
+
+  - name: 'Enable reading NT and LM password hashes by samba account of {{ samba__ldap_device_dn | join(",") }}'
+    dn: '{{ ([ "cn=Samba Server Account", "ou=Roles" ] + samba__ldap_base_dn) | join(",") }}'
+    attributes:
+      roleOccupant: '{{ samba__ldap_binddn }}'
+    state: '{{ "present"
+               if (samba__ldap_enabled)
+               else "ignore" }}'
+
+  - name: 'Create samba domain for {{ samba__ldap_domain_dn }}'
+    dn: '{{ samba__ldap_domain_dn }}'
+    objectClass: '{{ samba__ldap_domain_object_classes }}'
+    attributes: '{{ samba__ldap_domain_attributes }}'
+    state: '{{ "present"
+               if (samba__ldap_enabled)
+               else "ignore" }}'
 
                                                                    # ]]]

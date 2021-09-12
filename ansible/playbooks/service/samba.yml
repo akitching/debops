@@ -20,5 +20,10 @@
       ferm__dependent_rules:
         - '{{ samba__ferm__dependent_rules }}'
 
+    - role: ldap
+      tags: [ 'role::ldap', 'skip::ldap' ]
+      ldap__dependent_tasks:
+        - '{{ samba__ldap__dependent_tasks }}'
+
     - role: samba
       tags: [ 'role::samba', 'skip::samba' ]

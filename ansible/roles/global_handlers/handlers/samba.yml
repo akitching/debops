@@ -16,3 +16,8 @@
   service:
     name: 'smbd'
     state: 'reloaded'
+
+- name: Restart smbd
+  service:
+    name: 'smbd'
+    state: 'restarted'

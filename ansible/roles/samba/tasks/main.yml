@@ -16,6 +16,26 @@
   register: samba__register_packages
   until: samba__register_packages is succeeded
 
+- name: Make sure that Ansible local facts directory exists
+  file:
+    path: '/etc/ansible/facts.d'
+    state: 'directory'
+    owner: 'root'
+    group: 'root'
+    mode: '0755'
+
+- name: Save Samba local facts
+  template:
+    src: 'etc/ansible/facts.d/samba.fact.j2'
+    dest: '/etc/ansible/facts.d/samba.fact'
+    owner: 'root'
+    group: 'root'
+    mode: '0755'
+  notify: [ 'Refresh host facts' ]
+
+- name: Update Ansible facts if they were modified
+  meta: 'flush_handlers'
+
 - name: Create root Samba directories
   file:
     path: '{{ item }}'
@@ -46,6 +66,20 @@
     group: 'root'
     mode: '0644'
   notify: [ 'Check samba config' ]
+
+- name: Set LDAP bind DN password
+  command:
+    argv:
+      - /usr/bin/smbpasswd
+      - '-w'
+      - '{{ samba__ldap_bindpw }}'
+  no_log: True
+  # If LDAP is enabled, the domain SID is stored in the directory
+  # If we can get it, the password must be set correctly, if not
+  # we need to set it
+  when: samba__ldap_enabled
+        and ansible_local.samba.domains[samba__workgroup] is undefined
+  notify: [ 'Refresh host facts', 'Restart smbd' ]
 
 # Kernel modules [[[
 
