@@ -110,6 +110,9 @@ slapd__default_schemas:
   # FreeRADIUS DHCPv6 schema
   - '{{ slapd__debops_schema_path + "/freeradius-dhcpv6.schema" }}'
 
+  # Samba schema
+  - '{{ slapd__debops_schema_path + "/samba.schema" }}'
+
                                                                    # ]]]
 # .. envvar:: slapd__schemas [[[
 #
@@ -148,7 +151,7 @@ slapd__combined_schemas: '{{ slapd__default_schemas
 # .. envvar:: slapd__base_packages [[[
 #
 # List of required APT packages for OpenLDAP service.
-slapd__base_packages: [ 'slapd', 'ldap-utils', 'ssl-cert', 'libldap-common' ]
+slapd__base_packages: [ 'slapd', 'ldap-utils', 'ssl-cert', 'libldap-common', 'slapd-contrib' ]
 
                                                                    # ]]]
 # .. envvar:: slapd__rfc2307bis_packages [[[
@@ -460,6 +463,7 @@ slapd__default_tasks:
         - '{8}back_monitor'
         - '{9}lastbind'
         - '{10}autogroup'
+        - '{11}smbk5pwd'
     ordered: True
 
   - name: 'Enable Sync Provider overlay in the cn=config database'
@@ -539,6 +543,15 @@ slapd__default_tasks:
     objectClass: [ 'olcOverlayConfig', 'olcLastBindConfig' ]
     attributes:
       olcOverlay: '{11}lastbind'
+
+  - name: 'Enable SmbK5Pwd overlay in the main database'
+    dn: 'olcOverlay={12}smbk5pwd,olcDatabase={1}mdb,cn=config'
+    objectClass: [ 'olcOverlayConfig', 'olcSmbK5PwdConfig' ]
+    attributes:
+      olcOverlay: '{12}smbk5pwd'
+#     If we don't specify an enable, OpenLDAP will try to enable all types
+#     This will break the import as the krb5KDCEntry objectClass isn't necessarily present
+      olcSmbK5PwdEnable: shadow
 
   - name: 'Configure Password Policy overlay in the main database'
     dn: 'olcOverlay={1}ppolicy,olcDatabase={1}mdb,cn=config'
@@ -651,6 +664,13 @@ slapd__default_tasks:
     dn: 'olcOverlay={11}lastbind,olcDatabase={1}mdb,cn=config'
     attributes:
       olcLastBindPrecision: '{{ (60 * 60 * 24) }}'
+    state: 'exact'
+
+  - name: 'Configure SmbK5Pwd overlay in the main database'
+    dn: 'olcOverlay={12}smbk5pwd,olcDatabase={1}mdb,cn=config'
+    attributes:
+      olcSmbK5PwdEnable: samba
+      olcSmbK5PwdMustChange: 0
     state: 'exact'
 
   - name: 'Configure the OpenLDAP server log level'
@@ -771,6 +791,11 @@ slapd__default_tasks:
         - 'mailAddress eq,sub'
         - 'mailPrivateAddress eq,sub'
         - 'mailAlternateAddress eq,sub'
+        - 'sambaSID eq'
+        - 'sambaPrimaryGroupSID eq'
+        - 'sambaGroupType eq'
+        - 'sambaSIDList eq'
+        - 'sambaDomainName eq'
 
   - name: 'Enable the monitor database'
     dn: 'olcDatabase={2}monitor,cn=config'
@@ -863,6 +888,20 @@ slapd__acl_tasks:
         - |-
           to attrs="userPassword"
           by self      =wx
+          by anonymous auth
+          by *         none
+
+        - |-
+          to attrs="sambaLMPassword"
+          by self      =wx
+          by group/organizationalRole/roleOccupant.exact="cn=Samba Server Account, ou=Roles,{{ slapd__basedn }}" read
+          by anonymous auth
+          by *         none
+
+        - |-
+          to attrs="sambaNTPassword"
+          by self      =wx
+          by group/organizationalRole/roleOccupant.exact="cn=Samba Server Account, ou=Roles,{{ slapd__basedn }}" read
           by anonymous auth
           by *         none
 
@@ -980,6 +1019,10 @@ slapd__structure_tasks:
 
   - name: 'Create the ou=System object'
     dn: '{{ [ "ou=System" ] + slapd__base_dn }}'
+    objectClass: 'organizationalStructure'
+
+  - name: 'Create the ou=Domains object'
+    dn: '{{ [ "ou=Domains" ] + slapd__base_dn }}'
     objectClass: 'organizationalStructure'
 
     # Refer to slapo-ppolicy(5) for details
@@ -1138,6 +1181,13 @@ slapd__structure_tasks:
         - '!authenticate'
         - '!requiretty'
         - 'env_check+=SSH_CLIENT'
+
+  - name: 'Create Samba Server Account role'
+    dn: '{{ [ "cn=Samba Server Account", "ou=Roles" ] + slapd__base_dn }}'
+    objectClass: 'organizationalRole'
+    attributes:
+      cn: 'Samba Server Account'
+      description: 'Services which can read samba NT and LM password hashes'
 
                                                                    # ]]]
 # .. envvar:: slapd__tasks [[[
@@ -1414,11 +1464,12 @@ slapd__slapacl_default_tasks:
 
   - name: 'Manage unprivileged user object for ACL tests'
     dn: 'uid=slapacl-test-unpriv-user,ou=People,{{ slapd__basedn }}'
-    objectClass: [ 'inetOrgPerson' ]
+    objectClass: [ 'inetOrgPerson', 'sambaSamAccount' ]
     attributes:
       uid: 'slapacl-test-unpriv-user'
       cn: 'Unprivileged User'
       surname: 'User'
+      sambaSID: 'S-1-5-21-3258741258-9632541254-9856321458-9658741256'
     state: '{{ slapd__slapacl_test_objects_state }}'
 
                                                                    # ]]]
@@ -1514,6 +1565,24 @@ slapd__slapacl_default_tests:
     dn: 'uid=slapacl-test-unpriv-user,ou=People,{{ slapd__basedn }}'
     authdn: ''
     query: 'userPassword/read'
+    policy: 'denied'
+    state: '{{ "present"
+               if (slapd__slapacl_test_objects_state == "present")
+               else "init" }}'
+
+  - name: "Deny NT password read access by anonymous users"
+    dn: 'uid=slapacl-test-unpriv-user,ou=People,{{ slapd__basedn }}'
+    authdn: ''
+    query: 'sambaNTPassword/read'
+    policy: 'denied'
+    state: '{{ "present"
+               if (slapd__slapacl_test_objects_state == "present")
+               else "init" }}'
+
+  - name: "Deny LM password read access by anonymous users"
+    dn: 'uid=slapacl-test-unpriv-user,ou=People,{{ slapd__basedn }}'
+    authdn: ''
+    query: 'sambaLMPassword/read'
     policy: 'denied'
     state: '{{ "present"
                if (slapd__slapacl_test_objects_state == "present")
