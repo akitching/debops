@@ -30,7 +30,7 @@
 
 - name: Setup samba-homedir.sh script
   ansible.builtin.template:
-    src: 'usr/local/sbin/samba-homedir.sh.j2'
+    src: '{{ lookup("debops.debops.template_src", "usr/local/sbin/samba-homedir.sh.j2") }}'
     dest: '/usr/local/sbin/samba-homedir.sh'
     owner: 'root'
     group: 'root'
@@ -39,7 +39,7 @@
 
 - name: Configure Samba
   ansible.builtin.template:
-    src: 'etc/samba/smb.conf.j2'
+    src: '{{ lookup("debops.debops.template_src", "etc/samba/smb.conf.j2") }}'
     dest: '/etc/samba/smb.conf'
     owner: 'root'
     group: 'root'
@@ -58,7 +58,7 @@
 
 - name: Ensure kernel modules are loaded on system boot
   ansible.builtin.template:
-    src: 'etc/modules-load.d/ansible-samba.conf.j2'
+    src: '{{ lookup("debops.debops.template_src", "etc/modules-load.d/ansible-samba.conf.j2") }}'
     dest: '/etc/modules-load.d/ansible-samba.conf'
     owner: 'root'
     group: 'root'
